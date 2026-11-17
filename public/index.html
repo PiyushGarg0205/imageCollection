@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facial Emotion Data Collection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full">
+        <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Batch Emotion Capture</h2>
+        
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Proxy Name (Identifier):</label>
+            <input type="text" id="proxy-name" placeholder="e.g., User_001" class="w-full border-gray-300 rounded-md shadow-sm p-2 border focus:ring-blue-500 focus:border-blue-500">
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <!-- Left: Webcam -->
+            <div>
+                <p class="text-sm font-semibold text-center text-gray-600 mb-2">Your Camera</p>
+                <div class="relative bg-gray-200 rounded-lg overflow-hidden h-64 flex items-center justify-center shadow-inner">
+                    <video id="webcam" autoplay playsinline class="absolute inset-0 w-full h-full object-cover transform scale-x-[-1]"></video>
+                    <p id="cam-status" class="text-gray-500 z-10">Loading Camera & AI Model...</p>
+                </div>
+            </div>
+
+            <!-- Right: Reference Image -->
+            <div>
+                <p class="text-sm font-semibold text-center text-blue-600 mb-2">Target Expression</p>
+                <div class="relative bg-gray-100 rounded-lg overflow-hidden h-64 flex items-center justify-center border-2 border-dashed border-blue-300">
+                    <img id="ref-image" src="/references/Surprise.jpg" alt="Reference" class="absolute inset-0 w-full h-full object-cover">
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="mb-6 flex space-x-2">
+            <select id="emotion-select" class="flex-1 border-gray-300 rounded-md shadow-sm p-3 border font-semibold text-gray-700 focus:ring-blue-500 focus:border-blue-500">
+                <option value="Surprise">Surprise 😲</option>
+                <option value="Fear">Fear 😨</option>
+                <option value="Disgust">Disgust 🤢</option>
+                <option value="Happy">Happy 😀</option>
+                <option value="Sad">Sad 😢</option>
+                <option value="Angry">Angry 😡</option>
+                <option value="Neutral">Neutral 😐</option>
+            </select>
+            <button id="capture-btn" disabled class="bg-indigo-600 text-white font-bold py-3 px-6 rounded shadow hover:bg-indigo-700 transition transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
+                Initializing AI...
+            </button>
+        </div>
+
+        <!-- Progress Tracker -->
+        <div class="mb-6 bg-gray-50 p-4 rounded border">
+            <p class="text-sm font-medium text-gray-700 mb-3">Capture Progress (Need all 7):</p>
+            <div id="badges-container" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <div class="mb-6 flex items-start">
+            <input type="checkbox" id="consent" class="mt-1 h-4 w-4 text-blue-600 rounded">
+            <label for="consent" class="ml-2 text-sm text-gray-600 leading-tight">
+                I consent to my 7 images being stored for machine learning training. I understand my data will not be used for identity tracking.
+            </label>
+        </div>
+
+        <button id="upload-all-btn" disabled class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition text-lg">
+            Upload Dataset
+        </button>
+
+        <p id="status-msg" class="mt-4 text-center text-sm font-semibold"></p>
+    </div>
+
+    <!-- Use Type Module to Load MediaPipe -->
+    <script type="module">
+        import { FaceDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+        const EMOTIONS = ['Surprise', 'Fear', 'Disgust', 'Happy', 'Sad', 'Angry', 'Neutral'];
+        
+        // Maps dropdown values exactly to your provided filenames
+        const FILE_MAP = {
+            'Surprise': 'Surprise.jpg',
+            'Fear': 'fear.jpg', 
+            'Disgust': 'Disgust.jpg',
+            'Happy': 'Happy.jpg',
+            'Sad': 'Sad.jpg',
+            'Angry': 'Angry.jpg',
+            'Neutral': 'Neutral.jpg'
+        };
+
+        const capturedData = {}; 
+        let faceDetector;
+        
+        const video = document.getElementById('webcam');
+        const proxyInput = document.getElementById('proxy-name');
+        const emotionSelect = document.getElementById('emotion-select');
+        const captureBtn = document.getElementById('capture-btn');
+        const uploadBtn = document.getElementById('upload-all-btn');
+        const consentCheckbox = document.getElementById('consent');
+        const statusMsg = document.getElementById('status-msg');
+        const badgesContainer = document.getElementById('badges-container');
+        const refImage = document.getElementById('ref-image');
+
+        // 1. Initialize MediaPipe Face Detector
+        async function initializeAI() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+                faceDetector = await FaceDetector.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+                        delegate: "GPU"
+                    },
+                    runningMode: "IMAGE"
+                });
+                
+                captureBtn.innerText = "Capture Face";
+                captureBtn.disabled = false;
+                document.getElementById('cam-status').style.display = 'none';
+            } catch (error) {
+                console.error("AI Init Error:", error);
+                document.getElementById('cam-status').innerText = 'Failed to load AI model.';
+            }
+        }
+
+        // 2. Start Camera & AI
+        async function startSystem() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                video.srcObject = stream;
+                
+                // Wait for video to be ready before initializing AI
+                video.onloadeddata = () => {
+                    initializeAI();
+                };
+            } catch (err) {
+                document.getElementById('cam-status').innerText = 'Camera access denied.';
+            }
+        }
+        startSystem();
+
+        // 3. UI Handlers
+        function updateReferenceImage(emotion) {
+            refImage.src = `/references/${FILE_MAP[emotion]}`;
+            refImage.onerror = function() {
+                this.onerror = null;
+                this.src = `https://placehold.co/400x400/e2e8f0/475569?text=${emotion}`;
+            };
+        }
+
+        emotionSelect.addEventListener('change', (e) => {
+            updateReferenceImage(e.target.value.split(' ')[0]);
+        });
+        updateReferenceImage('Surprise');
+
+        function renderBadges() {
+            badgesContainer.innerHTML = '';
+            EMOTIONS.forEach(emo => {
+                const isCaptured = !!capturedData[emo];
+                const badge = document.createElement('span');
+                badge.className = `px-3 py-1 text-sm font-bold rounded-full border ${isCaptured ? 'bg-green-100 text-green-700 border-green-300' : 'bg-white text-gray-400 border-gray-200'}`;
+                badge.innerText = isCaptured ? `${emo} ✅` : emo;
+                badgesContainer.appendChild(badge);
+            });
+            checkUploadReadiness();
+        }
+        renderBadges();
+
+        function checkUploadReadiness() {
+            const hasAllEmotions = Object.keys(capturedData).length === 7;
+            const hasProxy = proxyInput.value.trim().length > 0;
+            const hasConsent = consentCheckbox.checked;
+            uploadBtn.disabled = !(hasAllEmotions && hasProxy && hasConsent);
+        }
+
+        proxyInput.addEventListener('input', checkUploadReadiness);
+        consentCheckbox.addEventListener('change', checkUploadReadiness);
+
+        // 4. Capture & Smart Cropping Logic
+        captureBtn.addEventListener('click', async () => {
+            statusMsg.innerText = "Analyzing face...";
+            statusMsg.className = "mt-4 text-center text-sm font-semibold text-blue-600";
+            
+            const currentEmotion = emotionSelect.value.split(' ')[0];
+            
+            // Draw current video frame to an offscreen canvas (un-mirrored for accurate detection)
+            const rawCanvas = document.createElement('canvas');
+            rawCanvas.width = video.videoWidth;
+            rawCanvas.height = video.videoHeight;
+            const ctx = rawCanvas.getContext('2d');
+            ctx.translate(rawCanvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0);
+            
+            // Run Face Detection
+            const detections = faceDetector.detect(rawCanvas).detections;
+            
+            if (detections.length === 0) {
+                statusMsg.innerText = "❌ No face detected. Please look clearly at the camera.";
+                statusMsg.className = "mt-4 text-center text-sm font-semibold text-red-600";
+                return;
+            }
+
+            // Extract Bounding Box
+            const bbox = detections[0].boundingBox;
+            
+            // Add padding so the crop isn't just the eyes/nose, but includes jaw/hair
+            const padX = bbox.width * 0.4;
+            const padY = bbox.height * 0.4;
+
+            let cx = bbox.originX + (bbox.width / 2);
+            let cy = bbox.originY + (bbox.height / 2);
+            let size = Math.max(bbox.width + padX, bbox.height + padY);
+
+            // Calculate boundaries, keeping the crop square
+            let startX = Math.max(0, cx - (size / 2));
+            let startY = Math.max(0, cy - (size / 2));
+            
+            // Ensure crop doesn't bleed off the edge of the original canvas
+            if (startX + size > rawCanvas.width) size = rawCanvas.width - startX;
+            if (startY + size > rawCanvas.height) size = rawCanvas.height - startY;
+
+            // Draw final 224x224 cropped image
+            const modelCanvas = document.createElement('canvas');
+            modelCanvas.width = 224;
+            modelCanvas.height = 224;
+            const modelCtx = modelCanvas.getContext('2d');
+            
+            modelCtx.drawImage(
+                rawCanvas, 
+                startX, startY, size, size, // Source boundaries
+                0, 0, 224, 224              // Destination boundaries
+            );
+            
+            modelCanvas.toBlob((blob) => {
+                capturedData[currentEmotion] = blob;
+                renderBadges();
+                statusMsg.innerText = `✅ ${currentEmotion} captured and cropped successfully.`;
+                statusMsg.className = "mt-4 text-center text-sm font-semibold text-green-600";
+                
+                // Auto-advance
+                const missing = EMOTIONS.find(e => !capturedData[e]);
+                if (missing) {
+                    Array.from(emotionSelect.options).forEach(opt => {
+                        if(opt.value.includes(missing)) emotionSelect.value = opt.value;
+                    });
+                    updateReferenceImage(missing);
+                }
+            }, 'image/jpeg', 0.9);
+        });
+
+        // 5. Upload Dataset
+        uploadBtn.addEventListener('click', () => {
+            statusMsg.innerText = "Uploading all 7 images...";
+            statusMsg.className = "mt-4 text-center text-sm font-semibold text-blue-600";
+            uploadBtn.disabled = true;
+            
+            const formData = new FormData();
+            formData.append('proxy_name', proxyInput.value.trim());
+            formData.append('consent_given', 'true'); // <-- ADDED THIS FOR BACKEND SECURITY VALIDATION
+            
+            EMOTIONS.forEach(emo => {
+                formData.append('emotions', emo); 
+                formData.append('images', capturedData[emo], `${emo}.jpg`);
+            });
+
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.error) throw new Error(data.error);
+                statusMsg.innerText = "✅ " + data.message;
+                statusMsg.className = "mt-4 text-center text-lg font-bold text-green-600";
+                
+                Object.keys(capturedData).forEach(k => delete capturedData[k]);
+                proxyInput.value = '';
+                consentCheckbox.checked = false;
+                renderBadges();
+                updateReferenceImage('Surprise');
+                emotionSelect.selectedIndex = 0;
+            })
+            .catch(err => {
+                statusMsg.innerText = "❌ Upload failed: " + err.message;
+                statusMsg.className = "mt-4 text-center text-sm font-semibold text-red-600";
+                checkUploadReadiness();
+            });
+        });
+    </script>
+</body>
+</html>

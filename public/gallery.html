@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Gallery</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8 min-h-screen">
+
+    <div class="max-w-6xl mx-auto">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Collected Dataset</h1>
+            <a href="/" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700">Back to Capture</a>
+        </div>
+
+        <p id="loading" class="text-gray-500">Loading images...</p>
+        
+        <!-- Grid to hold the images -->
+        <div id="gallery-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+            <!-- Images injected here -->
+        </div>
+    </div>
+
+    <script>
+        async function loadGallery() {
+            try {
+                const response = await fetch('/api/faces');
+                const faces = await response.json();
+                
+                const grid = document.getElementById('gallery-grid');
+                document.getElementById('loading').style.display = 'none';
+
+                if (faces.length === 0) {
+                    grid.innerHTML = '<p class="text-gray-500 col-span-full">No images collected yet.</p>';
+                    return;
+                }
+
+                faces.forEach(face => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white p-2 rounded-lg shadow-sm border flex flex-col items-center';
+                    
+                    card.innerHTML = `
+                        <img src="/api/image/${face._id}" alt="${face.emotion}" class="w-full h-auto rounded object-cover mb-2" loading="lazy">
+                        <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">${face.emotion}</span>
+                        <span class="text-sm font-semibold text-gray-800">${face.proxy_name}</span>
+                        <span class="text-xs text-gray-400 mt-1">${new Date(face.uploaded_at).toLocaleDateString()}</span>
+                    `;
+                    
+                    grid.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Error loading gallery:', error);
+                document.getElementById('loading').innerText = 'Failed to load gallery.';
+            }
+        }
+
+        loadGallery();
+    </script>
+</body>
+</html>
